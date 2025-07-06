@@ -1,6 +1,5 @@
 #include "tree_sitter/parser.h"
 
-#include <ctype.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -39,6 +38,33 @@ static const char* const keywords[] = {
     "return",    "spmd",  "switch",      "true",      "try",      "while",
 };
 
+// Custom ASCII-only implementations for Zed compatibility
+static inline bool is_ascii_alpha(uint32_t chr)
+{
+    return (chr >= 'a' && chr <= 'z') || (chr >= 'A' && chr <= 'Z');
+}
+
+static inline bool is_ascii_digit(uint32_t chr)
+{
+    return (chr >= '0' && chr <= '9');
+}
+
+static inline bool is_matlab_punct(uint32_t chr)
+{
+    // Define specific punctuation characters relevant to MATLAB commands
+    // Based on analysis of scan_command usage and common MATLAB punctuation
+    switch (chr) {
+        case '!': case '"': case '#': case '$': case '%': case '&': case '\'':
+        case '(': case ')': case '*': case '+': case ',': case '-': case '.':
+        case '/': case ':': case ';': case '<': case '=': case '>': case '?':
+        case '@': case '[': case '\\': case ']': case '^': case '_': case '`':
+        case '{': case '|': case '}': case '~':
+            return true;
+        default:
+            return false;
+    }
+}
+
 static inline void advance(TSLexer* lexer)
 {
     lexer->advance(lexer, false);
@@ -70,14 +96,14 @@ static inline bool iswspace_matlab(const uint32_t chr)
 
 static inline bool is_identifier(const uint32_t chr, const bool start)
 {
-    // isalpha or isdigit is SIGSEGVing os some UTF-8 chars, like U+10C6BD
-    // (0xF48C9ABD), a file with just those bytes shows the problem.
+    // Using ASCII-only implementations for Zed compatibility
+    // UTF-8 chars >= 0x80 are excluded for safety
     if (chr >= 0x80) {
         return false;
     }
 
-    const bool alpha = isalpha(chr);
-    const bool numeric = !start && isdigit(chr);
+    const bool alpha = is_ascii_alpha(chr);
+    const bool numeric = !start && is_ascii_digit(chr);
     const bool special = chr == '_';
 
     return alpha || numeric || special;
@@ -180,7 +206,7 @@ static bool scan_comment(TSLexer* lexer, bool entry_delimiter)
     // like .5 inside matrices/cells: [0 .5].
     if (entry_delimiter && !percent && !line_continuation) {
         lexer->result_symbol = ENTRY_DELIMITER;
-        return isdigit(lexer->lookahead);
+        return is_ascii_digit(lexer->lookahead);
     }
 
     if (block) {
@@ -335,7 +361,7 @@ static bool scan_command(Scanner* scanner, TSLexer* lexer)
     }
 
     // Let's now consider punctuation marks.
-    if (ispunct(lexer->lookahead)) {
+    if (is_matlab_punct(lexer->lookahead)) {
         // In this case, we advance and look at what comes next too.
         const uint32_t first = lexer->lookahead;
         advance(lexer);
@@ -792,7 +818,7 @@ static bool scan_entry_delimiter(TSLexer* lexer, int skipped)
     if (lexer->lookahead == '.') {
         advance(lexer);
         advance(lexer);
-        return isdigit(lexer->lookahead);
+        return is_ascii_digit(lexer->lookahead);
     }
 
     if (lexer->lookahead == '{' || lexer->lookahead == '(' || lexer->lookahead == '\'') {
